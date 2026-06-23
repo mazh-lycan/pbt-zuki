@@ -1,6 +1,5 @@
 //SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-import "@openzeppelin/contracts/access/Ownable.sol";
+pragma solidity ^0.8.26;
 import "@chiru-labs/pbt/src/v2/PBTSimple.sol";
 
 contract Season1byMazh is PBTSimple{
@@ -11,7 +10,7 @@ contract Season1byMazh is PBTSimple{
         uint256 maxDurationWindow
     ) 
         PBTSimple("Season1byMazh", "S1M", maxDurationWindow){
-           for (iuint256 i = 0; i < chipAddresses.length; i++) {
+           for (uint256 i = 0; i < chipAddresses.length; i++) {
                 _setChip(tokenIds[i], chipAddresses[i]);
             }
         }
@@ -27,7 +26,7 @@ contract Season1byMazh is PBTSimple{
       uint256 signatureTimestamp,
       bytes memory extras
     ) external returns (uint256) {
-        return _mint(to, chipId, chipSig, sigTimestamp, extras);
+        return _mint(to, chipId, chipSignature, signatureTimestamp, extras);
     }
 
 }
