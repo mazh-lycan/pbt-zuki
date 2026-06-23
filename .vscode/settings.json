@@ -1,0 +1,8 @@
+{
+  "solidity.packageDefaultDependenciesDirectory": "node_modules",
+  "solidity.remappings": [
+    "@chiru-labs/pbt/=node_modules/@chiru-labs/pbt/",
+    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+    "solady/=node_modules/solady/src/"
+  ]
+}
