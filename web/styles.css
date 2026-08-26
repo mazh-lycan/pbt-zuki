@@ -1,0 +1,45 @@
+body {
+    font-family: system-ui, sans-serif;
+    max-width: 26rem;
+    margin: 0 auto;
+    padding: 1.5rem 1rem 3rem;
+    line-height: 1.5;
+  }
+
+  img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    object-fit: cover;
+    background: #eee;
+    border-radius: 0.5rem;
+  }
+
+  button {
+    display: block;
+    width: 100%;
+    padding: 0.85rem;
+    margin-top: 0.75rem;
+    font: inherit;
+    border: 1px solid #333;
+    border-radius: 0.5rem;
+    background: #fff;
+  }
+
+  button:disabled {
+    opacity: 0.5;
+  }
+
+  #status,
+  #token-state {
+    color: #666;
+    font-size: 0.9rem;
+  }
+
+  #verify-result[data-state="ok"] {
+    color: #197a35;
+  }
+
+  #verify-result[data-state="bad"] {
+    color: #a11;
+  }
