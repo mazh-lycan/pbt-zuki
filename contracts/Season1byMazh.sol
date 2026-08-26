@@ -1,16 +1,36 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
-import "@chiru-labs/pbt/src/v2/PBTSimple.sol";
+import "./pbt/PBTSimple.sol";
 
 contract Season1byMazh is PBTSimple{
 
+    /// @dev The chip and tokenId arrays have different lengths.
+    error ArrayLengthMismatch();
+
+    /// @dev No chips were provided to pair.
+    error NoChipsProvided();
+
+    /// @dev The signature duration window is zero, which would reject every scan.
+    error MaxDurationWindowIsZero();
+
+    /// @dev A `tokenId` of zero cannot be paired, as it is what an unpaired chip maps to.
+    error TokenIdIsZero();
+
+    /// @notice Initialize a mapping from chipAddress to tokenId.
+    /// @param chipAddresses The addresses derived from the public keys of the chips
+    /// @param tokenIds The tokenIds to map to the addresses
+    /// @param maxDurationWindow Maximum duration for a signature to be valid since the timestamp used in the signature.
     constructor(
         address[] memory chipAddresses,
         uint256[] memory tokenIds,
         uint256 maxDurationWindow
     ) 
         PBTSimple("Season1byMazh", "S1M", maxDurationWindow){
-           for (uint256 i = 0; i < chipAddresses.length; i++) {
+            if (chipAddresses.length != tokenIds.length) revert ArrayLengthMismatch();
+            if (chipAddresses.length == 0) revert NoChipsProvided();
+            if (maxDurationWindow == 0) revert MaxDurationWindowIsZero();
+            for (uint256 i = 0; i < chipAddresses.length; i++) {
+                if (tokenIds[i] == 0) revert TokenIdIsZero();
                 _setChip(tokenIds[i], chipAddresses[i]);
             }
         }
