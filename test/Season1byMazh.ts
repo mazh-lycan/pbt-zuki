@@ -21,6 +21,14 @@ const MAX_DURATION_WINDOW = 3600n;
 const PAIRED_TOKEN_IDS = [1n, 2n, 3n];
 const NO_EXTRAS: Hex = "0x";
 
+// Shaped like the directory CID a folder upload returns. The trailing slash is
+// what makes `base + tokenId` address a child of the directory instead of a
+// sibling of it, and nothing on-chain can enforce it.
+const BASE_URI =
+  "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi/";
+const REPINNED_BASE_URI =
+  "ipfs://bafybeihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku/";
+
 const ERC165_INTERFACE_ID: Hex = "0x01ffc9a7";
 const ERC721_INTERFACE_ID: Hex = "0x80ac58cd";
 
@@ -54,11 +62,12 @@ describe("Season1byMazh", async function () {
     return privateKeyToAccount(generatePrivateKey());
   }
 
-  async function deployPairedTo(chips: Chip[]) {
+  async function deployPairedTo(chips: Chip[], baseURI: string = BASE_URI) {
     return viem.deployContract("Season1byMazh", [
       chips.map((chip) => chip.address),
       PAIRED_TOKEN_IDS.slice(0, chips.length),
       MAX_DURATION_WINDOW,
+      baseURI,
     ]);
   }
 
@@ -113,6 +122,7 @@ describe("Season1byMazh", async function () {
           [newChip().address],
           [0n],
           MAX_DURATION_WINDOW,
+          BASE_URI
         ]),
         revertedWithCustomError("TokenIdIsZero"),
       );
@@ -124,6 +134,7 @@ describe("Season1byMazh", async function () {
           [newChip().address, newChip().address, newChip().address],
           [1n, 0n, 3n],
           MAX_DURATION_WINDOW,
+          BASE_URI
         ]),
         revertedWithCustomError("TokenIdIsZero"),
       );
@@ -135,6 +146,7 @@ describe("Season1byMazh", async function () {
           [newChip().address, newChip().address],
           [1n],
           MAX_DURATION_WINDOW,
+          BASE_URI
         ]),
         revertedWithCustomError("ArrayLengthMismatch"),
       );
@@ -142,7 +154,7 @@ describe("Season1byMazh", async function () {
 
     it("refuses a season with no chips", async function () {
       await assert.rejects(
-        viem.deployContract("Season1byMazh", [[], [], MAX_DURATION_WINDOW]),
+        viem.deployContract("Season1byMazh", [[], [], MAX_DURATION_WINDOW, BASE_URI]),
         revertedWithCustomError("NoChipsProvided"),
       );
     });
@@ -153,6 +165,7 @@ describe("Season1byMazh", async function () {
           [newChip().address],
           [PAIRED_TOKEN_IDS[0]],
           0n,
+          BASE_URI
         ]),
         revertedWithCustomError("MaxDurationWindowIsZero"),
       );
@@ -180,6 +193,7 @@ describe("Season1byMazh", async function () {
           [chip.address],
           [PAIRED_TOKEN_IDS[0]],
           MAX_DURATION_WINDOW,
+          BASE_URI
         ]);
 
       await viem.assertions.emitWithArgs(
@@ -517,6 +531,189 @@ describe("Season1byMazh", async function () {
           buyer.account.address,
         ]),
         false,
+      );
+    });
+  });
+
+  describe("metadata", function () {
+    it("exposes the base URI it was deployed with", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      assert.equal(await season.read.baseURI(), BASE_URI);
+    });
+
+    it("announces the base URI at deployment", async function () {
+      const { contract, deploymentTransaction } =
+        await viem.sendDeploymentTransaction("Season1byMazh", [
+          [newChip().address],
+          [PAIRED_TOKEN_IDS[0]],
+          MAX_DURATION_WINDOW,
+          BASE_URI,
+        ]);
+
+      await viem.assertions.emitWithArgs(
+        deploymentTransaction.hash,
+        contract,
+        "NewBaseURI",
+        [BASE_URI],
+      );
+    });
+
+    it("joins the base URI to the token id once minted", async function () {
+      const chips = [newChip(), newChip()];
+      const season = await deployPairedTo(chips);
+
+      await mintWithChip(season, chips[0], collector.account.address);
+      await mintWithChip(season, chips[1], collector.account.address);
+
+      // Asserted in full rather than by prefix, so a base URI missing its
+      // trailing slash fails here instead of at a gateway.
+      assert.equal(
+        await season.read.tokenURI([PAIRED_TOKEN_IDS[0]]),
+        `${BASE_URI}1`,
+      );
+      assert.equal(
+        await season.read.tokenURI([PAIRED_TOKEN_IDS[1]]),
+        `${BASE_URI}2`,
+      );
+    });
+
+    it("withholds the artwork of a paired token until it is minted", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      await viem.assertions.revertWith(
+        season.read.tokenURI([PAIRED_TOKEN_IDS[0]]),
+        "ERC721: invalid token ID",
+      );
+    });
+
+    it("has no metadata for a token id that was never paired", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      await viem.assertions.revertWith(
+        season.read.tokenURI([9999n]),
+        "ERC721: invalid token ID",
+      );
+    });
+
+    it("stays silent rather than serving a bare token id when no base URI is set", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip], "");
+      await mintWithChip(season, chip, collector.account.address);
+
+      assert.equal(await season.read.tokenURI([PAIRED_TOKEN_IDS[0]]), "");
+    });
+
+    it("keeps the artwork with the token when it changes hands by scan", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+      await mintWithChip(season, chip, collector.account.address);
+
+      const timestamp = await now();
+      const signature = await signAsChip(
+        chip,
+        season,
+        buyer.account.address,
+        timestamp,
+      );
+      await season.write.transferToken([
+        buyer.account.address,
+        chip.address,
+        signature,
+        timestamp,
+        false,
+        NO_EXTRAS,
+      ]);
+
+      assert.equal(
+        await season.read.tokenURI([PAIRED_TOKEN_IDS[0]]),
+        `${BASE_URI}1`,
+      );
+    });
+
+    it("lets the owner repoint every token to a newly pinned directory", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+      await mintWithChip(season, chip, collector.account.address);
+
+      await viem.assertions.emitWithArgs(
+        season.write.setBaseURI([REPINNED_BASE_URI]),
+        season,
+        "NewBaseURI",
+        [REPINNED_BASE_URI],
+      );
+
+      assert.equal(await season.read.baseURI(), REPINNED_BASE_URI);
+      assert.equal(
+        await season.read.tokenURI([PAIRED_TOKEN_IDS[0]]),
+        `${REPINNED_BASE_URI}1`,
+      );
+    });
+
+    it("refuses a base URI change from anyone but the owner", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      await viem.assertions.revertWith(
+        season.write.setBaseURI([REPINNED_BASE_URI], {
+          account: buyer.account,
+        }),
+        "Ownable: caller is not the owner",
+      );
+
+      assert.equal(await season.read.baseURI(), BASE_URI);
+    });
+  });
+
+  describe("ownership", function () {
+    it("makes the deployer the owner", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      assert.equal(
+        await season.read.owner(),
+        getAddress(collector.account.address),
+      );
+    });
+
+    it("refuses to be left ownerless, which would freeze the metadata forever", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      await viem.assertions.revertWith(
+        season.write.renounceOwnership(),
+        "Ownable: renounceOwnership is not allowed",
+      );
+
+      assert.equal(
+        await season.read.owner(),
+        getAddress(collector.account.address),
+      );
+    });
+
+    it("refuses to renounce for a non-owner too", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      await viem.assertions.revertWith(
+        season.write.renounceOwnership({ account: buyer.account }),
+        "Ownable: renounceOwnership is not allowed",
+      );
+    });
+
+    it("still hands ownership over, along with control of the metadata", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+      await mintWithChip(season, chip, collector.account.address);
+
+      await season.write.transferOwnership([buyer.account.address]);
+      assert.equal(
+        await season.read.owner(),
+        getAddress(buyer.account.address),
+      );
+
+      await season.write.setBaseURI([REPINNED_BASE_URI], {
+        account: buyer.account,
+      });
+      assert.equal(
+        await season.read.tokenURI([PAIRED_TOKEN_IDS[0]]),
+        `${REPINNED_BASE_URI}1`,
       );
     });
   });
