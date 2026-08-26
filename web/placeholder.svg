@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 600" role="img">
+  <rect width="600" height="600" fill="#e9e6e1" />
+  <circle cx="300" cy="268" r="96" fill="none" stroke="#b3aca2" stroke-width="8" />
+  <path d="M300 220v96M256 268h88" stroke="#b3aca2" stroke-width="8" stroke-linecap="round" />
+  <text
+    x="300"
+    y="430"
+    text-anchor="middle"
+    font-family="system-ui, sans-serif"
+    font-size="34"
+    fill="#8a8279"
+  >
+    Unclaimed
+  </text>
+</svg>
