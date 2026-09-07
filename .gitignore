@@ -32,3 +32,6 @@
 
 # Chips keys
 chips.md
+
+# Dedicated Pinata gateway (copy from web/config.local.example.js)
+web/config.local.js
