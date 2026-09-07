@@ -31,9 +31,18 @@ body {
   }
 
   #status,
-  #token-state {
+  #token-state,
+  #token-description {
     color: #666;
     font-size: 0.9rem;
+  }
+
+  #token-description {
+    margin-top: 0;
+  }
+
+  img[data-state="loading"] {
+    opacity: 0.55;
   }
 
   #verify-result[data-state="ok"] {

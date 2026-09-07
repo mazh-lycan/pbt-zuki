@@ -17,6 +17,7 @@ const ui = {
   status: document.getElementById("status"),
   artwork: document.getElementById("artwork"),
   tokenName: document.getElementById("token-name"),
+  tokenDescription: document.getElementById("token-description"),
   tokenState: document.getElementById("token-state"),
   verify: document.getElementById("verify"),
   verifyResult: document.getElementById("verify-result"),
@@ -51,8 +52,31 @@ function gatewayUrl(uri) {
     : uri;
 }
 
-function describeError(error) {
-  return error.shortMessage ?? error.message ?? String(error);
+function chainIdHex() {
+  const hex = config.chainId.toString(16);
+  return `0x${hex.length % 2 === 0 ? hex : `0${hex}`}`;
+}
+
+function showPlaceholder(alt = "Unclaimed artwork") {
+  ui.artwork.removeAttribute("data-state");
+  ui.artwork.alt = alt;
+  ui.artwork.src = config.placeholderImage;
+}
+
+function showArtwork(src, alt) {
+  ui.artwork.dataset.state = "loading";
+  ui.artwork.alt = alt;
+  ui.artwork.onerror = () => {
+    ui.artwork.onerror = null;
+    showPlaceholder(alt);
+    ui.tokenState.textContent =
+      `${ui.tokenState.textContent} Artwork failed to load.`;
+  };
+  ui.artwork.onload = () => {
+    ui.artwork.onload = null;
+    ui.artwork.removeAttribute("data-state");
+  };
+  ui.artwork.src = src;
 }
 
 async function loadHolderAndArtwork() {
@@ -65,19 +89,32 @@ async function loadHolderAndArtwork() {
   }
 
   if (holder === null) {
+    ui.tokenName.textContent = `Season1byMazh #${tokenId}`;
+    ui.tokenDescription.textContent = "";
     ui.tokenState.textContent = "Unclaimed. The artwork is revealed on mint.";
-    ui.artwork.src = config.placeholderImage;
+    showPlaceholder();
     return;
   }
 
-  ui.tokenState.textContent = `Held by ${short(holder)}`;
+  ui.tokenState.textContent = `Held by ${short(holder)}. Loading artwork…`;
+  showPlaceholder("Loading artwork");
 
   try {
     const response = await fetch(gatewayUrl(await readContract.tokenURI(tokenId)));
+    if (!response.ok) {
+      throw new Error(`metadata ${response.status}`);
+    }
     const metadata = await response.json();
-    ui.artwork.src = gatewayUrl(metadata.image);
-  } catch {
-    ui.artwork.src = config.placeholderImage;
+    const name = metadata.name ?? `Season1byMazh #${tokenId}`;
+    ui.tokenName.textContent = name;
+    ui.tokenDescription.textContent = metadata.description ?? "";
+    ui.tokenState.textContent = `Held by ${short(holder)}`;
+    showArtwork(gatewayUrl(metadata.image), name);
+  } catch (error) {
+    ui.tokenName.textContent = `Season1byMazh #${tokenId}`;
+    ui.tokenDescription.textContent = "";
+    ui.tokenState.textContent = `Held by ${short(holder)}. Could not load metadata: ${describeError(error)}`;
+    showPlaceholder(`Season1byMazh #${tokenId}`);
   }
 }
 
@@ -143,13 +180,31 @@ async function connect() {
   try {
     await window.ethereum.request({ method: "eth_requestAccounts" });
 
-    const wanted = `0x${config.chainId.toString(16)}`;
+    const wanted = chainIdHex();
     const current = await window.ethereum.request({ method: "eth_chainId" });
     if (current !== wanted) {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: wanted }],
-      });
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: wanted }],
+        });
+      } catch (error) {
+        // MetaMask does not ship Arbitrum Sepolia. Mobile sometimes wraps the
+        // unknown-chain 4902 inside a -32603, so both are treated as "add it".
+        if (error.code !== 4902 && error.code !== -32603) throw error;
+        await window.ethereum.request({
+          method: "wallet_addEthereumChain",
+          params: [
+            {
+              chainId: wanted,
+              chainName: config.chainName,
+              rpcUrls: [config.rpcUrl],
+              nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+              blockExplorerUrls: [config.explorerUrl],
+            },
+          ],
+        });
+      }
     }
 
     const signer = await new BrowserProvider(window.ethereum).getSigner();
