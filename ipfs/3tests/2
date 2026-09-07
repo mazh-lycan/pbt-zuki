@@ -1,0 +1,10 @@
+{
+  "name": "Season1byMazh #2",
+  "description": "Physical Backed Token for the Season 1 Test by Mazh. Ownership of this token is bound to the NFC chip embedded in the physical piece.",
+  "image": "ipfs://bafybeihtlvupuxnq4557dquddkckvkpywgubvzb6mfli6gknjivwafgrqu/2.jpg",
+  "attributes": [
+    { "trait_type": "Character", "value": "TBD" },
+    { "trait_type": "Material", "value": "Plastic" },
+    { "trait_type": "Edition", "value": 2 }
+  ]
+}
