@@ -10,11 +10,21 @@ import { Wallet, getBytes } from "./ethers.js";
 // the server, so the key stays out of access logs, Referer headers and
 // analytics.
 export function readChipFromUrl() {
-  const params = new URLSearchParams(window.location.hash.slice(1));
-  const privateKey = params.get("k");
+  const hashParams = new URLSearchParams(window.location.hash.slice(1));
+  const queryParams = new URLSearchParams(window.location.search);
+  const privateKey = hashParams.get("k") ?? queryParams.get("k");
 
   if (privateKey === null) {
     return null;
+  }
+
+  // Query strings hit server logs; MetaMask's in-app browser often drops the
+  // fragment, so the deep link may arrive as ?k=. Move it back to the hash.
+  if (queryParams.has("k")) {
+    queryParams.delete("k");
+    const search = queryParams.toString();
+    const url = `${window.location.pathname}${search ? `?${search}` : ""}#k=${privateKey}`;
+    window.history.replaceState(null, "", url);
   }
 
   const wallet = new Wallet(privateKey);

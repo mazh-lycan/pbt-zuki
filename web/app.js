@@ -52,9 +52,75 @@ function gatewayUrl(uri) {
     : uri;
 }
 
+function describeError(error) {
+  return (
+    error?.shortMessage ??
+    error?.reason ??
+    error?.data?.message ??
+    error?.error?.message ??
+    error?.message ??
+    String(error)
+  );
+}
+
+function errorCode(error) {
+  return (
+    error?.code ??
+    error?.error?.code ??
+    error?.data?.originalError?.code ??
+    error?.info?.error?.code
+  );
+}
+
+function getEthereum() {
+  const ethereum = window.ethereum;
+  if (ethereum === undefined) {
+    return undefined;
+  }
+  if (Array.isArray(ethereum.providers)) {
+    return (
+      ethereum.providers.find((provider) => provider.isMetaMask) ??
+      ethereum.providers[0]
+    );
+  }
+  return ethereum;
+}
+
+function waitForEthereum(ms = 2500) {
+  const existing = getEthereum();
+  if (existing !== undefined) {
+    return Promise.resolve(existing);
+  }
+
+  return new Promise((resolve) => {
+    const finish = () => {
+      window.removeEventListener("ethereum#initialized", finish);
+      clearTimeout(timer);
+      resolve(getEthereum());
+    };
+    const timer = setTimeout(finish, ms);
+    window.addEventListener("ethereum#initialized", finish);
+  });
+}
+
 function chainIdHex() {
-  const hex = config.chainId.toString(16);
-  return `0x${hex.length % 2 === 0 ? hex : `0${hex}`}`;
+  // QUANTITY encoding: no leading zeros. 421614 → 0x66eee. A padded value
+  // such as 0x066eee is rejected by MetaMask mobile.
+  return `0x${config.chainId.toString(16)}`;
+}
+
+function sameChain(left, right) {
+  return BigInt(left) === BigInt(right);
+}
+
+function metamaskDappUrl() {
+  const url = new URL(window.location.href);
+  const key =
+    new URLSearchParams(url.hash.slice(1)).get("k") ?? url.searchParams.get("k");
+  if (key !== null) {
+    url.searchParams.set("k", key);
+  }
+  return `https://metamask.app.link/dapp/${url.host}${url.pathname}${url.search}${url.hash}`;
 }
 
 function showPlaceholder(alt = "Unclaimed artwork") {
@@ -166,39 +232,44 @@ async function verify() {
 }
 
 async function connect() {
-  if (window.ethereum === undefined) {
-    // On a phone the tag opens the system browser, where no injected provider
-    // exists. This hands the same URL, fragment included, to MetaMask's own
-    // browser instead.
-    const { host, pathname, hash } = window.location;
-    window.location.href = `https://metamask.app.link/dapp/${host}${pathname}${hash}`;
+  const ethereum = await waitForEthereum();
+
+  if (ethereum === undefined) {
+    // System browsers have no injected provider. Deep-link into MetaMask's
+    // in-app browser, duplicating the key as ?k= because that WebView often
+    // drops the fragment.
+    setStatus("Opening in MetaMask…");
+    window.location.href = metamaskDappUrl();
     return;
   }
 
   ui.connect.disabled = true;
+  setStatus("Requesting the selected account…");
 
   try {
-    await window.ethereum.request({ method: "eth_requestAccounts" });
+    const accounts = await ethereum.request({ method: "eth_requestAccounts" });
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+      throw new Error("No account selected in MetaMask.");
+    }
 
     const wanted = chainIdHex();
-    const current = await window.ethereum.request({ method: "eth_chainId" });
-    if (current !== wanted) {
+    const current = await ethereum.request({ method: "eth_chainId" });
+    if (!sameChain(current, wanted)) {
       try {
-        await window.ethereum.request({
+        await ethereum.request({
           method: "wallet_switchEthereumChain",
           params: [{ chainId: wanted }],
         });
       } catch (error) {
-        // MetaMask does not ship Arbitrum Sepolia. Mobile sometimes wraps the
-        // unknown-chain 4902 inside a -32603, so both are treated as "add it".
-        if (error.code !== 4902 && error.code !== -32603) throw error;
-        await window.ethereum.request({
+        const code = errorCode(error);
+        if (code !== 4902 && code !== -32603) throw error;
+        await ethereum.request({
           method: "wallet_addEthereumChain",
           params: [
             {
               chainId: wanted,
               chainName: config.chainName,
-              rpcUrls: [config.rpcUrl],
+              rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"],
               nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
               blockExplorerUrls: [config.explorerUrl],
             },
@@ -207,15 +278,38 @@ async function connect() {
       }
     }
 
-    const signer = await new BrowserProvider(window.ethereum).getSigner();
+    const provider = new BrowserProvider(ethereum);
+    const signer = await provider.getSigner(accounts[0]);
     wallet = await signer.getAddress();
     writeContract = new Contract(config.contractAddress, SEASON_ABI, signer);
+
+    ethereum.removeAllListeners?.("accountsChanged");
+    ethereum.removeAllListeners?.("chainChanged");
+    ethereum.on?.("accountsChanged", () => {
+      wallet = null;
+      writeContract = null;
+      ui.connect.textContent = "Connect wallet";
+      refreshClaimButton();
+      setStatus("Account changed. Connect again.");
+    });
+    ethereum.on?.("chainChanged", () => {
+      wallet = null;
+      writeContract = null;
+      ui.connect.textContent = "Connect wallet";
+      refreshClaimButton();
+      setStatus("Network changed. Connect again.");
+    });
 
     ui.connect.textContent = `Connected ${short(wallet)}`;
     refreshClaimButton();
     setStatus("Wallet connected.");
   } catch (error) {
-    setStatus(`Wallet connection failed: ${describeError(error)}`);
+    const code = errorCode(error);
+    if (code === 4001) {
+      setStatus("Connection rejected in MetaMask.");
+    } else {
+      setStatus(`Wallet connection failed: ${describeError(error)}`);
+    }
   } finally {
     ui.connect.disabled = false;
   }
@@ -313,7 +407,12 @@ async function start() {
 
   ui.verify.hidden = false;
   ui.connect.hidden = false;
-  setStatus("Ready.");
+  const ethereum = await waitForEthereum(800);
+  setStatus(
+    ethereum === undefined
+      ? "Ready. Connect opens MetaMask."
+      : "Ready. Tap Connect wallet and approve the selected account.",
+  );
 }
 
 start();
