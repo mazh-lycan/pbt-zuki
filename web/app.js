@@ -170,6 +170,26 @@ function sameChain(left, right) {
   return BigInt(left) === BigInt(right);
 }
 
+async function claimTxOverrides(provider) {
+  const [feeData, block] = await Promise.all([
+    provider.getFeeData(),
+    provider.getBlock("latest"),
+  ]);
+  const baseFee = block.baseFeePerGas ?? 0n;
+  const suggested = feeData.maxFeePerGas ?? baseFee;
+  // Arbitrum Sepolia's base fee moves between estimate and send. MetaMask's
+  // default then lands a few million wei under the new base fee (258724000
+  // vs 260594000). Double it and add the same ~0.01 gwei bump used in MM.
+  const maxFeePerGas =
+    (suggested > baseFee ? suggested : baseFee) * 2n + 10_000_000n;
+  let maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? 0n;
+  if (maxPriorityFeePerGas > maxFeePerGas) {
+    maxPriorityFeePerGas = maxFeePerGas;
+  }
+
+  return { maxFeePerGas, maxPriorityFeePerGas, block };
+}
+
 function metamaskDappUrl() {
   const url = new URL(window.location.href);
   const key =
@@ -382,9 +402,9 @@ async function claim() {
     // ahead of the node that mines the tx, which reverts as
     // SignatureTimestampInFuture and surfaces as ethers' "could not coalesce".
     const walletProvider = writeContract.runner.provider;
-    const block = await walletProvider.getBlock("latest");
-    const signatureTimestamp = BigInt(block.timestamp) - 15n;
     const nonce = await writeContract.chipNonce(chip.address);
+    const fee = await claimTxOverrides(walletProvider);
+    const signatureTimestamp = BigInt(fee.block.timestamp) - 15n;
 
     const digest = keccak256(
       AbiCoder.defaultAbiCoder().encode(
@@ -405,12 +425,22 @@ async function claim() {
         ? [wallet, chip.address, signature, signatureTimestamp, NO_EXTRAS]
         : [wallet, chip.address, signature, signatureTimestamp, false, NO_EXTRAS];
     const method = holder === null ? "mint" : "transferToken";
+    const txOverrides = {
+      maxFeePerGas: fee.maxFeePerGas,
+      maxPriorityFeePerGas: fee.maxPriorityFeePerGas,
+    };
 
     setStatus("Checking the claim will succeed…");
     await writeContract[method].staticCall(...args);
+    try {
+      const estimated = await writeContract[method].estimateGas(...args);
+      txOverrides.gasLimit = (estimated * 130n) / 100n;
+    } catch {
+      txOverrides.gasLimit = 500_000n;
+    }
 
     setStatus("Confirm the transaction in your wallet…");
-    const transaction = await writeContract[method](...args);
+    const transaction = await writeContract[method](...args, txOverrides);
 
     setStatus("Waiting for the transaction…");
     await transaction.wait();
