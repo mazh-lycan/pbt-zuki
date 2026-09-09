@@ -53,14 +53,71 @@ function gatewayUrl(uri) {
 }
 
 function describeError(error) {
-  return (
+  const decoded = decodeContractError(error);
+  if (decoded !== null) {
+    return (
+      {
+        InvalidSignature:
+          "InvalidSignature (the tag signed a different digest than the chain expected)",
+        SignatureTimestampInFuture:
+          "SignatureTimestampInFuture (wallet clock/RPC was behind the signed timestamp)",
+        SignatureTimestampTooOld: "SignatureTimestampTooOld (took too long to confirm)",
+        NoMappedTokenForChip: "NoMappedTokenForChip",
+      }[decoded] ?? decoded
+    );
+  }
+
+  const nested =
+    error?.info?.error?.message ??
+    error?.error?.message ??
+    error?.data?.message ??
     error?.shortMessage ??
     error?.reason ??
-    error?.data?.message ??
-    error?.error?.message ??
-    error?.message ??
-    String(error)
-  );
+    error?.message;
+
+  if (typeof nested === "string" && nested.length > 0 && nested !== "could not coalesce error") {
+    return nested;
+  }
+
+  return String(error);
+}
+
+function decodeContractError(error) {
+  const iface = writeContract?.interface ?? readContract.interface;
+  let current = error;
+
+  for (let depth = 0; depth < 8 && current; depth++) {
+    const candidates = [
+      current.data,
+      current.info?.error?.data,
+      current.error?.data,
+      current.payload?.error?.data,
+    ];
+
+    for (const candidate of candidates) {
+      const hex =
+        typeof candidate === "string"
+          ? candidate
+          : typeof candidate?.data === "string"
+            ? candidate.data
+            : null;
+      if (hex === null || !hex.startsWith("0x") || hex.length < 10) {
+        continue;
+      }
+      try {
+        const parsed = iface.parseError(hex);
+        if (parsed !== null) {
+          return parsed.name;
+        }
+      } catch {
+        // Not a Season1byMazh custom error.
+      }
+    }
+
+    current = current.info?.error ?? current.error ?? current.cause;
+  }
+
+  return null;
 }
 
 function errorCode(error) {
@@ -321,15 +378,14 @@ async function claim() {
   try {
     setStatus("Asking the tag to sign for your address…");
 
-    // The chain's own clock, not the phone's: a device running a few seconds
-    // fast would produce a timestamp the contract rejects as being in the
-    // future.
-    const block = await readProvider.getBlock("latest");
-    const signatureTimestamp = BigInt(block.timestamp);
-    const nonce = await readContract.chipNonce(chip.address);
+    // Use MetaMask's RPC for the clock and nonce. dRPC can be a few seconds
+    // ahead of the node that mines the tx, which reverts as
+    // SignatureTimestampInFuture and surfaces as ethers' "could not coalesce".
+    const walletProvider = writeContract.runner.provider;
+    const block = await walletProvider.getBlock("latest");
+    const signatureTimestamp = BigInt(block.timestamp) - 15n;
+    const nonce = await writeContract.chipNonce(chip.address);
 
-    // The digest commits to the recipient, which is why the tag can only sign
-    // once a wallet is connected, and why the signature cannot be redirected.
     const digest = keccak256(
       AbiCoder.defaultAbiCoder().encode(
         ["address", "uint256", "bytes32", "address", "uint256", "bytes32"],
@@ -344,25 +400,17 @@ async function claim() {
       ),
     );
     const signature = await chip.signDigest(digest);
+    const args =
+      holder === null
+        ? [wallet, chip.address, signature, signatureTimestamp, NO_EXTRAS]
+        : [wallet, chip.address, signature, signatureTimestamp, false, NO_EXTRAS];
+    const method = holder === null ? "mint" : "transferToken";
+
+    setStatus("Checking the claim will succeed…");
+    await writeContract[method].staticCall(...args);
 
     setStatus("Confirm the transaction in your wallet…");
-    const transaction =
-      holder === null
-        ? await writeContract.mint(
-            wallet,
-            chip.address,
-            signature,
-            signatureTimestamp,
-            NO_EXTRAS,
-          )
-        : await writeContract.transferToken(
-            wallet,
-            chip.address,
-            signature,
-            signatureTimestamp,
-            false,
-            NO_EXTRAS,
-          );
+    const transaction = await writeContract[method](...args);
 
     setStatus("Waiting for the transaction…");
     await transaction.wait();
@@ -371,7 +419,12 @@ async function claim() {
     refreshClaimButton();
     setStatus("Done. The token is yours.");
   } catch (error) {
-    setStatus(`Claim failed: ${describeError(error)}`);
+    const code = errorCode(error);
+    if (code === 4001) {
+      setStatus("Claim rejected in MetaMask.");
+    } else {
+      setStatus(`Claim failed: ${describeError(error)}`);
+    }
     refreshClaimButton();
   }
 }
