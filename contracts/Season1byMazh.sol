@@ -84,4 +84,18 @@ contract Season1byMazh is PBTSimple, Ownable{
         return _mint(to, chipId, chipSignature, signatureTimestamp, extras);
     }
 
+
+    /// @notice Update the chip pair tokenid - address
+    /// @param tokenId the tokenId to update
+    /// @param chipAddress the chip address to update
+    function updateChip(uint256 tokenId, address chipAddress) external onlyOwner{
+        if(tokenId == 0) revert TokenIdIsZero();
+        _setChip(tokenId, chipAddress);
+    }
+
+    /// @notice Remove the chip pair tokenid - address
+    /// @param tokenId the tokenId to remove
+    function removeChip(uint256 tokenId) external onlyOwner{
+        _unsetChip(tokenId);
+    }
 }
