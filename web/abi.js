@@ -7,4 +7,9 @@ export const SEASON_ABI = [
   "function baseURI() view returns (string)",
   "function mint(address to, address chipId, bytes chipSignature, uint256 signatureTimestamp, bytes extras) returns (uint256)",
   "function transferToken(address to, address chipId, bytes chipSignature, uint256 signatureTimestamp, bool useSafeTransfer, bytes extras) returns (uint256)",
+  "error InvalidSignature()",
+  "error SignatureTimestampInFuture()",
+  "error SignatureTimestampTooOld()",
+  "error NoMappedTokenForChip()",
+  "error ChipIdIsZeroAddress()",
 ];
