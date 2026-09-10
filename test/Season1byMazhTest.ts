@@ -225,6 +225,248 @@ describe("Season1byMazh", async function () {
     });
   });
 
+  describe("updating and removing chips", function () {
+    it("refuses to update a chip onto token id 0, which is what an unpaired chip maps to", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      await viem.assertions.revertWithCustomError(
+        season.write.updateChip([0n, newChip().address]),
+        season,
+        "TokenIdIsZero",
+      );
+    });
+
+    it("lets the owner retarget a token to a replacement chip", async function () {
+      const original = newChip();
+      const replacement = newChip();
+      const season = await deployPairedTo([original]);
+
+      await season.write.updateChip([PAIRED_TOKEN_IDS[0], replacement.address]);
+
+      assert.equal(
+        await season.read.tokenIdFor([replacement.address]),
+        PAIRED_TOKEN_IDS[0],
+      );
+      await viem.assertions.revertWithCustomError(
+        season.read.tokenIdFor([original.address]),
+        season,
+        "NoMappedTokenForChip",
+      );
+    });
+
+    it("announces the replacement pairing", async function () {
+      const original = newChip();
+      const replacement = newChip();
+      const season = await deployPairedTo([original]);
+
+      await viem.assertions.emitWithArgs(
+        season.write.updateChip([PAIRED_TOKEN_IDS[0], replacement.address]),
+        season,
+        "ChipSet",
+        [PAIRED_TOKEN_IDS[0], replacement.address],
+      );
+    });
+
+    it("lets the owner pair a chip to a token id that was not in the constructor", async function () {
+      const season = await deployPairedTo([newChip()]);
+      const extra = newChip();
+      const extraTokenId = 4n;
+
+      await season.write.updateChip([extraTokenId, extra.address]);
+
+      assert.equal(await season.read.tokenIdFor([extra.address]), extraTokenId);
+    });
+
+    it("refuses an update from anyone but the owner", async function () {
+      const original = newChip();
+      const season = await deployPairedTo([original]);
+
+      await viem.assertions.revertWith(
+        season.write.updateChip([PAIRED_TOKEN_IDS[0], newChip().address], {
+          account: buyer.account,
+        }),
+        "Ownable: caller is not the owner",
+      );
+
+      assert.equal(
+        await season.read.tokenIdFor([original.address]),
+        PAIRED_TOKEN_IDS[0],
+      );
+    });
+
+    it("refuses the zero address as a replacement chip", async function () {
+      const season = await deployPairedTo([newChip()]);
+
+      await viem.assertions.revertWithCustomError(
+        season.write.updateChip([PAIRED_TOKEN_IDS[0], zeroAddress]),
+        season,
+        "ChipIdIsZeroAddress",
+      );
+    });
+
+    it("lets the replacement chip mint, and not the old one", async function () {
+      const original = newChip();
+      const replacement = newChip();
+      const season = await deployPairedTo([original]);
+
+      await season.write.updateChip([PAIRED_TOKEN_IDS[0], replacement.address]);
+
+      const timestamp = await now();
+      const originalSignature = await signAsChip(
+        original,
+        season,
+        collector.account.address,
+        timestamp,
+      );
+      await viem.assertions.revertWithCustomError(
+        season.write.mint([
+          collector.account.address,
+          original.address,
+          originalSignature,
+          timestamp,
+          NO_EXTRAS,
+        ]),
+        season,
+        "WrongTokenForChip",
+      );
+
+      await mintWithChip(season, replacement, collector.account.address);
+      assert.equal(
+        await season.read.ownerOf([PAIRED_TOKEN_IDS[0]]),
+        getAddress(collector.account.address),
+      );
+    });
+
+    it("lets a minted token change hands under the replacement chip", async function () {
+      const original = newChip();
+      const replacement = newChip();
+      const season = await deployPairedTo([original]);
+      await mintWithChip(season, original, collector.account.address);
+
+      await season.write.updateChip([PAIRED_TOKEN_IDS[0], replacement.address]);
+
+      const timestamp = await now();
+      const signature = await signAsChip(
+        replacement,
+        season,
+        buyer.account.address,
+        timestamp,
+      );
+      await season.write.transferToken([
+        buyer.account.address,
+        replacement.address,
+        signature,
+        timestamp,
+        false,
+        NO_EXTRAS,
+      ]);
+
+      assert.equal(
+        await season.read.ownerOf([PAIRED_TOKEN_IDS[0]]),
+        getAddress(buyer.account.address),
+      );
+    });
+
+    it("lets the owner unpair a chip", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+
+      await season.write.removeChip([PAIRED_TOKEN_IDS[0]]);
+
+      await viem.assertions.revertWithCustomError(
+        season.read.tokenIdFor([chip.address]),
+        season,
+        "NoMappedTokenForChip",
+      );
+    });
+
+    it("announces the unpairing", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+
+      await viem.assertions.emitWithArgs(
+        season.write.removeChip([PAIRED_TOKEN_IDS[0]]),
+        season,
+        "ChipSet",
+        [PAIRED_TOKEN_IDS[0], zeroAddress],
+      );
+    });
+
+    it("refuses an unpairing from anyone but the owner", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+
+      await viem.assertions.revertWith(
+        season.write.removeChip([PAIRED_TOKEN_IDS[0]], {
+          account: buyer.account,
+        }),
+        "Ownable: caller is not the owner",
+      );
+
+      assert.equal(
+        await season.read.tokenIdFor([chip.address]),
+        PAIRED_TOKEN_IDS[0],
+      );
+    });
+
+    it("stops minting once the chip is unpaired", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+      await season.write.removeChip([PAIRED_TOKEN_IDS[0]]);
+
+      const timestamp = await now();
+      const signature = await signAsChip(
+        chip,
+        season,
+        collector.account.address,
+        timestamp,
+      );
+      await viem.assertions.revertWithCustomError(
+        season.write.mint([
+          collector.account.address,
+          chip.address,
+          signature,
+          timestamp,
+          NO_EXTRAS,
+        ]),
+        season,
+        "NoMappedTokenForChip",
+      );
+    });
+
+    it("leaves a minted token in place after unpairing", async function () {
+      const chip = newChip();
+      const season = await deployPairedTo([chip]);
+      await mintWithChip(season, chip, collector.account.address);
+
+      await season.write.removeChip([PAIRED_TOKEN_IDS[0]]);
+
+      assert.equal(
+        await season.read.ownerOf([PAIRED_TOKEN_IDS[0]]),
+        getAddress(collector.account.address),
+      );
+      assert.equal(
+        await season.read.tokenURI([PAIRED_TOKEN_IDS[0]]),
+        `${BASE_URI}1`,
+      );
+    });
+
+    it("lets the owner pair a chip again after removing it", async function () {
+      const original = newChip();
+      const replacement = newChip();
+      const season = await deployPairedTo([original]);
+      await season.write.removeChip([PAIRED_TOKEN_IDS[0]]);
+
+      await season.write.updateChip([PAIRED_TOKEN_IDS[0], replacement.address]);
+
+      await mintWithChip(season, replacement, collector.account.address);
+      assert.equal(
+        await season.read.ownerOf([PAIRED_TOKEN_IDS[0]]),
+        getAddress(collector.account.address),
+      );
+    });
+  });
+
   describe("minting", function () {
     it("mints the paired token to whoever the chip signed for", async function () {
       const chip = newChip();

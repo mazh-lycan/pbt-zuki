@@ -18,6 +18,10 @@ contract Season1byMazh is PBTSimple, Ownable{
     /// @dev A `tokenId` of zero cannot be paired, as it is what an unpaired chip maps to.
     error TokenIdIsZero();
 
+
+    /// @dev The tokenid is not mapped to the read chip address
+    error WrongTokenForChip();
+
     /// @notice Emitted when the base URI is updated
     /// @param baseURI The new base URI
     event NewBaseURI(string baseURI);
@@ -82,6 +86,21 @@ contract Season1byMazh is PBTSimple, Ownable{
       bytes memory extras
     ) external returns (uint256) {
         return _mint(to, chipId, chipSignature, signatureTimestamp, extras);
+    }
+
+    /// @dev PBTSimple's `_beforeMint` only checks that `_chipIds[tokenId]` is
+    ///      set, not that it still points at `chipId`. `_setChip` / `_unsetChip`
+    ///      also leave the old chip's reverse mapping in place, so a replaced
+    ///      tag could otherwise mint until the token exists. Match `tokenIdFor`.
+    function _beforeMint(
+        address to,
+        address chipId,
+        bytes memory chipSignature,
+        uint256 signatureTimestamp,
+        bytes memory extras
+    ) internal override returns (uint256 tokenId) {
+        tokenId = super._beforeMint(to, chipId, chipSignature, signatureTimestamp, extras);
+        if (_chipIds[tokenId] != chipId) revert WrongTokenForChip();
     }
 
 
