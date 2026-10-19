@@ -1,0 +1,4 @@
+Before it works end to end
+Fill in contractAddress in config.js after you deploy. That's the only required edit.
+
+The one thing I'd flag as a genuine risk for the live demo: window.ethereum doesn't exist in a phone's normal browser, which is exactly where an NFC tag opens. I handled it by deep-linking into MetaMask's in-app browser with https://metamask.app.link/dapp/..., carrying the fragment along so the key survives the hop. That's the standard approach and the fragment never reaches a server, but I haven't tested it on a device and deep-link behaviour varies between Android and iOS. Worth trying on your actual phone early, because if it misbehaves the fallback is WalletConnect, which is a much bigger change than anything else left on your list.
